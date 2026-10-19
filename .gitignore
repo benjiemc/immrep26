@@ -1,0 +1,29 @@
+# Project Files
+jobs/*
+notebooks/exploratory/
+containers/*
+
+data/raw/*
+!data/raw/.gitkeep
+data/external/*
+!data/external/.gitkeep
+data/interim/*
+!data/interim/.gitkeep
+data/processed/*
+!data/processed/.gitkeep
+
+# Python Files
+**/*.egg-info/*
+**/*.pyc
+**/.ipynb_checkpoints/*
+**/.pytest_cache/*
+**/*.t.err
+**/.coverage
+.venv/*
+
+# Snakemake Files
+**/.snakemake/*
+**/.snakemake_timestamp
+
+# Developement Environment Files
+.vscode/*

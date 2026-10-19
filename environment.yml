@@ -1,0 +1,12 @@
+name: immrep26
+channels:
+  - bioconda
+  - conda-forge
+  - nodefaults
+dependencies:
+  - jupyter
+  - pip
+  - python=3.14
+  - snakemake
+  - pip:
+      - kagglehub

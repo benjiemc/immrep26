@@ -10,3 +10,4 @@ dependencies:
   - snakemake
   - pip:
       - kagglehub
+      - ruff

@@ -5,9 +5,13 @@ channels:
   - nodefaults
 dependencies:
   - jupyter
+  - matplotlib
+  - numpy
   - pandas
   - pip
+  - plotly
   - python=3.14
+  - seaborn
   - snakemake
   - pip:
       - anarci-mhc

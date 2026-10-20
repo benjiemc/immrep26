@@ -1,0 +1,34 @@
+default_config = {
+    'log_level': 'info',
+}
+
+config = {**default_config, **config}
+
+
+rule lint:
+    shell:
+        """
+        ruff check
+        ruff format --check
+        """
+
+rule download_test_data:
+    output: "data/raw/immrep_test_set.csv"
+    run:
+        import kagglehub
+        from pathlib import Path
+
+        download_path = kagglehub.competition_download('immrep26')
+        download_path = Path(download_path)
+        (download_path / 'test.csv').move(Path(output[0]))
+
+rule process_dataset:
+    input:
+        dataset="data/raw/immrep_test_set.csv",
+        mhc_sequences="data/external/mhc_sequences"
+    output: "data/interim/sequences.csv"
+    resources:
+        runtime="10m",
+        mem="1GB",
+        tasks=1
+    script: "scripts/process_dataset.py"

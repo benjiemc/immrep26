@@ -5,9 +5,12 @@ channels:
   - nodefaults
 dependencies:
   - jupyter
+  - pandas
   - pip
   - python=3.14
   - snakemake
   - pip:
+      - anarci-mhc
       - kagglehub
       - ruff
+      - tidytcells

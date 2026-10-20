@@ -4,6 +4,8 @@ default_config = {
 
 config = {**default_config, **config}
 
+envvars:
+    "KAGGLE_API_TOKEN"
 
 rule lint:
     shell:

@@ -1,3 +1,6 @@
+import json
+import os
+
 default_config = {
     'log_level': 'info',
 }
@@ -5,7 +8,8 @@ default_config = {
 config = {**default_config, **config}
 
 envvars:
-    "KAGGLE_API_TOKEN"
+    "KAGGLE_API_TOKEN",
+    "TCRMODEL2_ALPHAFOLD_DATA_DIR"
 
 rule lint:
     shell:
@@ -34,3 +38,83 @@ rule process_dataset:
         mem="1GB",
         tasks=1
     script: "scripts/process_dataset.py"
+
+rule create_sequence_key:
+    input: "data/interim/sequences.csv"
+    output: "data/interim/sequence_key.txt"
+    resources:
+        runtime="1m",
+        mem="1GB"
+    shell:
+        """
+        cat \
+            <(sed 1d {input} | cut -d, -f12 | sort | uniq) \
+            <(sed 1d {input} | cut -d, -f13 | sort | uniq) \
+            <(sed 1d {input} | cut -d, -f16 | sort | uniq) \
+            <(sed 1d {input} | cut -d, -f17 | sort | uniq) | sort | uniq > $TEMPDIR/sequences.txt
+
+        paste -d ' ' <(cat $TEMPDIR/sequences.txt | xargs -I {{}} sh -c 'echo -n "{{}}" | sha256sum | cut -c1-8') $TEMPDIR/sequences.txt > {output}
+        """
+
+def _create_msa_names(path: str, template: list[str]) -> list[str]:
+    if not os.path.exists(path):
+        print(path, 'does not exist!')
+        return []
+
+    with open(path, 'r') as fh:
+        ids = [line.split()[0] for line in fh.readlines() if line]
+
+    return expand(template, name=ids)
+
+rule create_af3_msa_inputs:
+    input: "data/interim/sequence_key.txt"
+    output: _create_msa_names(f"data/interim/sequence_key.txt", 'data/interim/msa-inputs/{name}.json')
+    resources:
+        runtime="10m",
+        mem="1GB"
+    run:
+        output_dir = os.path.dirname(output[0])
+        if not os.path.exists(output_dir):
+            os.mkdir(output_dir)
+
+        with open(input[0], 'r') as fh:
+            for id_, sequence in (line.split() for line in fh.readlines() if line):
+                with open(os.path.join(output_dir, id_ + '.json'), 'w') as output_fh:
+                    json.dump(
+                    {
+                        'name': id_,
+                        'modelSeeds': [1],
+                        'sequences': [
+                            {'protein': {'id': 'A', 'sequence': sequence}},
+                        ],
+                        'dialect': 'alphafold3',
+                        'version': 1,
+                    },
+                    output_fh,
+                )
+
+rule run_create_msas_and_find_templates:
+    input: "data/interim/msa-inputs/{name}.json"
+    output:
+        unpaired_msa=protected('data/interim/msas/{name}_unpaired.a3m'),
+        paired_msa=protected('data/interim/msas/{name}_paired.a3m'),
+        templates=protected(directory('data/interim/templates/{name}'))
+    params:
+        alphafold_data_dir=os.environ['TCRMODEL2_ALPHAFOLD_DATA_DIR'],
+        uniref90_database_path=lambda wildcards: "${DB_DIR}/uniref90.tcrmhc.fasta",
+        mgnify_database_path=lambda wildcards: "${DB_DIR}/mgnify.fasta",
+        small_bfd_database_path=lambda wildcards: "${DB_DIR}/small_bfd.tcrmhc.fasta",
+        uniprot_cluster_annot_database_path=lambda wildcards: "${DB_DIR}/uniprot.tcrmhc.fasta",
+        seqres_database_path=lambda wildcards: "${DB_DIR}/pdb_seqres.txt",
+        pdb_database_path=lambda wildcards: "${DB_DIR}/pdb_mmcif/mmcif_files"
+    threads: 32
+    resources:
+        runtime="1h",
+        mem="5GB"
+    script: "scripts/create_msas_and_find_templates.py"
+
+rule create_msas_and_find_templates_for_dataset:
+    input:
+        unpaired_msas=_create_msa_names("data/interim/sequence_key.txt", 'data/interim/msas/{name}_unpaired.a3m'),
+        paired_msas=_create_msa_names("data/interim/sequence_key.txt", 'data/interim/msas/{name}_paired.a3m'),
+        templates=_create_msa_names("data/interim/sequence_key.txt", 'data/interim/templates/{name}')

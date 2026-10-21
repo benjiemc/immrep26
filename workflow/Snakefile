@@ -1,15 +1,18 @@
+import csv
 import json
 import os
 
 default_config = {
     'log_level': 'info',
+    'seed': [1],
 }
 
 config = {**default_config, **config}
 
 envvars:
     "KAGGLE_API_TOKEN",
-    "TCRMODEL2_ALPHAFOLD_DATA_DIR"
+    "TCRMODEL2_ALPHAFOLD_DATA_DIR",
+    "ALPHAFOLD3_WEIGHTS_DIR"
 
 rule lint:
     shell:
@@ -118,3 +121,96 @@ rule create_msas_and_find_templates_for_dataset:
         unpaired_msas=_create_msa_names("data/interim/sequence_key.txt", 'data/interim/msas/{name}_unpaired.a3m'),
         paired_msas=_create_msa_names("data/interim/sequence_key.txt", 'data/interim/msas/{name}_paired.a3m'),
         templates=_create_msa_names("data/interim/sequence_key.txt", 'data/interim/templates/{name}')
+
+def _get_complex_names(path: str, template: str) -> list[str]:
+    if not os.path.exists(path):
+        print(path, 'does not exist!')
+        return []
+
+    with open(path, 'r') as fh:
+        indices = [entry['tcr_id'] for entry in csv.DictReader(fh) if entry['tcr_id']]
+
+    return expand(template, name=indices)
+
+rule convert_sequences_to_jsons:
+    input: "data/interim/sequences.csv"
+    output: _get_complex_names("data/interim/sequences.csv","data/interim/sequences/{name}.json")
+    resources:
+        runtime="10m",
+        mem="1GB"
+    run:
+        output_dir = os.path.dirname(output[0])
+        os.makedirs(output_dir, exist_ok=True)
+
+        with open(input[0], 'r') as fh:
+            reader = csv.DictReader(fh)
+            for entry in reader:
+                with open(os.path.join(output_dir, f"{entry['tcr_id']}.json"), 'w') as output_fh:
+                    json.dump(
+                        {
+                            key: value for key, value in entry.items() if key in (
+                                'tcr_id', 'tcr_alpha_chain', 'tcr_beta_chain', 'peptide', 'mhc_chain_1', 'mhc_chain_2'
+                            )
+                        },
+                        output_fh,
+                    )
+
+def get_sequence_ids(sequence_path: str, template: str) -> list[str]:
+    if not os.path.exists(sequence_path):
+        print(sequence_path, 'does not exist!')
+        return []
+
+    with open(sequence_path, 'r') as fh:
+        sequences = json.load(fh)
+
+    ids = [
+        hashlib.sha256(sequence.encode()).hexdigest()[:8]
+        for sequence_type, sequence in sequences.items()
+        if sequence_type in ('tcr_alpha_chain', 'tcr_beta_chain', 'mhc_chain_1', 'mhc_chain_2')
+    ]
+
+    return expand(template, name=ids)
+
+rule create_af3_json:
+    input:
+        sequences="data/interim/sequences/{name}.json",
+        unpaired_msas=lambda wildcards: get_sequence_ids(f"data/interim/sequences/{wildcards.name}.json", 'data/interim/msas/{name}_unpaired.a3m'),
+        paired_msas=lambda wildcards: get_sequence_ids(f"data/interim/sequences/{wildcards.name}.json", 'data/interim/msas/{name}_paired.a3m'),
+        templates=lambda wildcards: get_sequence_ids(f"data/interim/sequences/{wildcards.name}.json", 'data/interim/templates/{name}')
+    output: temp("data/interim/{name}_seed-{seed}.json")
+    resources:
+        runtime="5m",
+        mem="1GB"
+    script: "scripts/convert_to_input.py"
+
+rule run_alphafold_predictions:
+    input:
+        sequence="data/interim/{name}_seed-{seed}.json",
+        unpaired_msas=lambda wildcards: get_sequence_ids(f"data/interim/sequences/{wildcards.name}.json", 'data/interim/msas/{name}_unpaired.a3m'),
+        paired_msas=lambda wildcards: get_sequence_ids(f"data/interim/sequences/{wildcards.name}.json", 'data/interim/msas/{name}_paired.a3m'),
+        templates=lambda wildcards: get_sequence_ids(f"data/interim/sequences/{wildcards.name}.json", 'data/interim/templates/{name}')
+    output:
+        structures=protected(expand("data/interim/structures_af3/{{name}}_seed-{{seed}}_sample-{sample}_model.cif", sample=range(5))),
+        summary_confidences=protected(expand("data/interim/structures_af3/{{name}}_seed-{{seed}}_sample-{sample}_summary_confidences.json", sample=range(5))),
+        confidences=protected(expand("data/interim/structures_af3/{{name}}_seed-{{seed}}_sample-{sample}_confidences.json", sample=range(5)))
+    params:
+        num_recycles=10,
+        alphafold3_weights_dir=os.environ['ALPHAFOLD3_WEIGHTS_DIR']
+    resources:
+        runtime="10m",
+        mem="40GB",
+        gpu=1
+    script: "scripts/predict_structure_with_alphafold3.py"
+
+def get_predicted_structure_names(path: str, template: str, seeds: list) -> list[str]:
+    if not os.path.exists(path):
+        print(path, 'does not exist!')
+        return []
+
+    with open(path, 'r') as fh:
+        indices = [entry['tcr_id'] for entry in csv.DictReader(fh)]
+
+    return expand(template, name=indices, seed=seeds, sample=list(range(5)))
+
+rule create_af3_structures:
+    input: get_predicted_structure_names("data/interim/sequences.csv", "data/interim/structures_af3/{name}_seed-{seed}_sample-{sample}_model.cif", config['seed'])

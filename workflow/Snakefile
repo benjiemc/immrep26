@@ -42,6 +42,14 @@ rule process_dataset:
         tasks=1
     script: "scripts/process_dataset.py"
 
+rule calculate_levenshtein_distances:
+    input: "data/interim/sequences.csv"
+    output: "data/processed/{cdr}_distance_matrix.txt"
+    resources:
+        runtime="1h",
+        mem="10GB"
+    script: "scripts/compute_pairwise_distances.py"
+
 rule create_sequence_key:
     input: "data/interim/sequences.csv"
     output: "data/interim/sequence_key.txt"

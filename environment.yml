@@ -16,5 +16,6 @@ dependencies:
   - pip:
       - anarci-mhc
       - kagglehub
+      - pyxDamerauLevenshtein
       - ruff
       - tidytcells

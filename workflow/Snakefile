@@ -1,6 +1,7 @@
 import csv
 import json
 import os
+import re
 
 default_config = {
     'log_level': 'info',
@@ -13,6 +14,11 @@ envvars:
     "KAGGLE_API_TOKEN",
     "TCRMODEL2_ALPHAFOLD_DATA_DIR",
     "ALPHAFOLD3_WEIGHTS_DIR"
+
+wildcard_constraints:
+    name="[A-Za-z0-9_]+",
+    seed=r"\d+",
+    sample=r"\d+"
 
 rule lint:
     shell:
@@ -222,3 +228,40 @@ def get_predicted_structure_names(path: str, template: str, seeds: list) -> list
 
 rule create_af3_structures:
     input: get_predicted_structure_names("data/interim/sequences.csv", "data/interim/structures_af3/{name}_seed-{seed}_sample-{sample}_model.cif", config['seed'])
+
+rule extract_confidence_scores:
+    input:
+        summary_confidences="data/interim/structures_af3/{name}_seed-{seed}_sample-{sample}_summary_confidences.json",
+        confidences="data/interim/structures_af3/{name}_seed-{seed}_sample-{sample}_confidences.json",
+        sequences="data/interim/sequences/{name}.json"
+    output: temp("data/interim/{name}_seed-{seed}_sample-{sample}_confidence_scores.csv")
+    resources:
+        runtime="20m",
+        mem="1GB"
+    script: "scripts/extract_af3_confidence_metrics.py"
+
+rule aggregate_confidence_scores:
+    input: get_predicted_structure_names("data/interim/sequences.csv", "data/interim/{name}_seed-{seed}_sample-{sample}_confidence_scores.csv", config['seed'])
+    output: "data/processed/confidence_scores_af3.csv"
+    resources:
+        runtime="10m",
+        mem="1GB"
+    run:
+        import pandas as pd
+
+        results = []
+        for path in input:
+            result = pd.read_csv(path)
+
+            info = re.search(
+                r'(?P<tcr_id>[A-Za-z0-9_]+)_seed-(?P<seed>\d+)_sample-(?P<sample>\d+)_confidence_scores.csv',
+                os.path.basename(path),
+            ).groupdict()
+
+            for key, value in info.items():
+                result[key] = value
+
+            results.append(result)
+
+        df = pd.concat(results).reset_index(drop=True)
+        df.to_csv(output[0], index=False)

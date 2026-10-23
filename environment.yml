@@ -18,4 +18,5 @@ dependencies:
       - kagglehub
       - pyxDamerauLevenshtein
       - ruff
+      - git+ssh://git@github.com/benjiemc/tcr-pmhc-predicted-structures.git
       - tidytcells

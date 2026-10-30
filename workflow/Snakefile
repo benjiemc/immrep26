@@ -265,3 +265,69 @@ rule aggregate_confidence_scores:
 
         df = pd.concat(results).reset_index(drop=True)
         df.to_csv(output[0], index=False)
+
+rule extract_padded_pae_matrices:
+    input:
+        confidences="data/interim/structures_af3/{name}_seed-{seed}_sample-{sample}_confidences.json",
+        sequences="data/interim/sequences/{name}.json"
+    output: "data/interim/pae_padded/{name}_{seed}_{sample}_pae.txt"
+    resources:
+        runtime="10m",
+        mem="1GB"
+    shell:
+        """
+        file_name=$(basename {input.confidences} _confidences.json)
+        tmp_file_name=$TMPDIR/${{file_name}}_pae.txt
+        jq -r '.pae[] | map(tostring) | join(" ")' {input.confidences} > $tmp_file_name
+
+        tmp_sequences="$TMPDIR/${{file_name}}_sequences.json"
+        jq '.mhc_type = "MH1"' {input.sequences} > $tmp_sequences
+
+        output_dir=$(dirname {output})
+        mkdir -p $output_dir
+
+        python -m tcr_pmhc_predicted_structures.apps.extract_tcr_pmhc_confidence \
+            --log-level {config[log_level]} \
+            --score pae \
+            --portion binding \
+            --pad \
+            --pad-direction centre \
+            -o {output} \
+            $tmp_file_name \
+            $tmp_sequences
+        """
+
+rule create_pae_dataset:
+    input:
+        sequences="data/interim/sequences.csv",
+        confidences=lambda wildcards: get_predicted_structure_names("data/interim/sequences.csv", "data/interim/pae_padded/{name}_{seed}_{sample}_pae.txt", config['seed'])
+    output: "data/processed/paes.h5"
+    resources:
+        runtime="10m",
+        mem="5GB"
+    shell:
+        """
+        python -m tcr_pmhc_predicted_structures.apps.create_pae_dataset \
+            --log-level {config[log_level]} \
+            --sequences <(sed s/tcr_id/id/ {input.sequences}) \
+            --confidences {input.confidences} \
+            -o {output}
+        """
+
+rule run_pae_aggregator:
+    input:
+        paes="data/processed/paes.h5",
+        model="data/external/PAEAggregator"
+    output: "data/interim/pae_aggregator_predictions.csv"
+    resources:
+        runtime="10m",
+        mem="5GB"
+    shell:
+        """
+        python -m tcr_pmhc_predicted_structures.apps.run_pae_aggregator \
+            --log-level {config[log_level]} \
+            --mode run \
+            --paes {input.paes} \
+            --model {input.model} \
+            -o {output}
+        """
